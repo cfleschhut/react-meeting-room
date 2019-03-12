@@ -1,136 +1,130 @@
-import React, { Component } from "react";
-import moment from "moment";
-import welcomeImage from "../images/welcome.svg";
-import spinner from "../images/spinner.svg";
-import { GOOGLE_API_KEY, CALENDAR_ID } from "../config.js";
+import React, { Component } from 'react';
+import moment from 'moment';
+import { orderBy } from 'lodash';
+import welcomeImage from '../images/welcome.svg';
+import spinner from '../images/spinner.svg';
+import { GOOGLE_API_KEY, CALENDAR_ID } from '../config.js';
 
-export default class App extends Component {
-  constructor(props) {
-    super(props);
-    this.state = {
-      time: moment().format("dd, Do MMMM, h:mm A"),
-      events: [],
-      isBusy: false,
-      isEmpty: false,
-      isLoading: true
-    };
-  }
+const timestampNow = moment().toISOString();
+const timestampEndOfDay = moment()
+  .endOf('day')
+  .toISOString();
 
-  componentDidMount = () => {
-    this.getEvents();
-    setInterval(() => {
-      this.tick();
-    }, 1000);
-    setInterval(() => {
-      this.getEvents();
-    }, 60000);
+class App extends Component {
+  state = {
+    time: moment().format('LLLL'),
+    events: [],
+    isBusy: false,
+    isEmpty: false,
+    isLoading: false,
   };
 
-  getEvents() {
-    let that = this;
-    function start() {
-      gapi.client
-        .init({
-          apiKey: GOOGLE_API_KEY
-        })
-        .then(function() {
-          return gapi.client.request({
-            path: `https://www.googleapis.com/calendar/v3/calendars/${CALENDAR_ID}/events?maxResults=11&orderBy=updated&timeMin=${moment().toISOString()}&timeMax=${moment()
-              .endOf("day")
-              .toISOString()}`
-          });
-        })
-        .then(
-          response => {
-            let events = response.result.items;
-            let sortedEvents = events.sort(function(a, b) {
-              return (
-                moment(b.start.dateTime).format("YYYYMMDD") -
-                moment(a.start.dateTime).format("YYYYMMDD")
-              );
-            });
-            if (events.length > 0) {
-              that.setState(
-                {
-                  events: sortedEvents,
-                  isLoading: false,
-                  isEmpty: false
-                },
-                () => {
-                  that.setStatus();
-                }
-              );
-            } else {
-              that.setState({
-                isBusy: false,
-                isEmpty: true,
-                isLoading: false
-              });
-            }
-          },
-          function(reason) {
-            console.log(reason);
-          }
-        );
-    }
-    gapi.load("client", start);
+  componentDidMount() {
+    this.loadClient();
+
+    setInterval(this.tick, 1000);
+    setInterval(this.getEvents, 60000);
   }
+
+  loadClient() {
+    gapi.load('client', this.initClient);
+  }
+
+  initClient = () => {
+    gapi.client.init({ apiKey: GOOGLE_API_KEY }).then(this.getEvents);
+  };
+
+  getEvents = () => {
+    this.setState({ isLoading: true });
+
+    gapi.client
+      .request({
+        path: `https://www.googleapis.com/calendar/v3/calendars/${CALENDAR_ID}/events`,
+        params: {
+          timeMin: timestampNow,
+          timeMax: timestampEndOfDay,
+          maxResults: 10,
+          singleEvents: true,
+          orderBy: 'startTime',
+        },
+      })
+      .then(
+        response => {
+          const { items: events } = response.result;
+          const sortedEvents = orderBy(events, event =>
+            moment(event.start.dateTime).format('YYYYMMDD'),
+          );
+
+          this.setState(
+            {
+              events: sortedEvents,
+              isLoading: false,
+              isEmpty: events.length === 0,
+              isBusy: events.length,
+            },
+            this.updateStatus,
+          );
+        },
+        response => {
+          const { error } = response.result;
+          console.log(error.message);
+        },
+      );
+  };
 
   tick = () => {
-    let time = moment().format("dddd, Do MMMM, h:mm A");
-    this.setState({
-      time: time
-    });
+    const time = moment().format('LLLL');
+
+    this.setState({ time });
   };
 
-  setStatus = () => {
-    let now = moment();
-    let events = this.state.events;
-    for (var e = 0; e < events.length; e++) {
-      var eventItem = events[e];
-      if (
-        moment(now).isBetween(
-          moment(eventItem.start.dateTime),
-          moment(eventItem.end.dateTime)
-        )
-      ) {
-        this.setState({
-          isBusy: true
-        });
-        return false;
-      } else {
-        this.setState({
-          isBusy: false
-        });
-      }
-    }
-  };
+  updateStatus = () => {
+    const now = moment();
+    const { events } = this.state;
 
-  render() {
-    const { time, events } = this.state;
-
-    let eventsList = events.map(function(event) {
-      return (
-        <a
-          className="list-group-item"
-          href={event.htmlLink}
-          target="_blank"
-          key={event.id}
-        >
-          {event.summary}{" "}
-          <span className="badge">
-            {moment(event.start.dateTime).format("h:mm a")},{" "}
-            {moment(event.end.dateTime).diff(
-              moment(event.start.dateTime),
-              "minutes"
-            )}{" "}
-            minutes, {moment(event.start.dateTime).format("MMMM Do")}{" "}
-          </span>
-        </a>
+    const isBusy = events.some(event => {
+      return now.isBetween(
+        moment(event.start.dateTime),
+        moment(event.end.dateTime),
       );
     });
 
-    let emptyState = (
+    this.setState({ isBusy });
+  };
+
+  render() {
+    const { time, events, isBusy, isLoading, isEmpty } = this.state;
+
+    const eventList = events.map(event => (
+      <a
+        className="list-group-item"
+        href={event.htmlLink}
+        target="_blank"
+        key={event.id}
+      >
+        <h3>{moment(event.start.dateTime).format('MMMM Do')}</h3>
+        <h4>{event.summary}</h4>
+        <ul>
+          <li>Start: {moment(event.start.dateTime).format('h:mm a')}</li>
+          <li>
+            Duration:{' '}
+            {moment(event.end.dateTime).diff(
+              moment(event.start.dateTime),
+              'minutes',
+            )}{' '}
+            minutes
+          </li>
+        </ul>
+      </a>
+    ));
+
+    const loadingState = (
+      <div className="loading">
+        <img src={spinner} alt="Loading…" />
+      </div>
+    );
+
+    const emptyState = (
       <div className="empty">
         <img src={welcomeImage} alt="Welcome" />
         <h3>
@@ -140,29 +134,25 @@ export default class App extends Component {
       </div>
     );
 
-    let loadingState = (
-      <div className="loading">
-        <img src={spinner} alt="Loading..." />
-      </div>
-    );
-
     return (
       <div className="container">
-        <div
-          className={
-            this.state.isBusy ? "current-status busy" : "current-status open"
-          }
-        >
-          <h1>{this.state.isBusy ? "BUSY" : "OPEN"}</h1>
+        <div className={`current-status ${isBusy ? 'busy' : 'open'}`}>
+          <h1>{isBusy ? 'Busy' : 'Open'}</h1>
         </div>
+
         <div className="upcoming-meetings">
-          <div className="current-time">{time}, 2018</div>
+          <div className="current-time">{time}</div>
+
           <h1>Upcoming Meetings</h1>
+
           <div className="list-group">
-            {this.state.isLoading && loadingState}
-            {events.length > 0 && eventsList}
-            {this.state.isEmpty && emptyState}
+            {isLoading && loadingState}
+
+            {events.length > 0 && eventList}
+
+            {isEmpty && emptyState}
           </div>
+
           <a
             className="primary-cta"
             href="https://calendar.google.com/calendar?cid=c3FtMnVkaTFhZGY2ZHM3Z2o5aDgxdHVldDhAZ3JvdXAuY2FsZW5kYXIuZ29vZ2xlLmNvbQ"
@@ -175,3 +165,5 @@ export default class App extends Component {
     );
   }
 }
+
+export default App;
